@@ -75,6 +75,8 @@ jobs:
         mkdir -p .repo/local_manifests
         curl -fsSL -o .repo/local_manifests/twrp-default.xml \
           "https://raw.githubusercontent.com/TWRP-Test/platform_manifest_twrp_aosp/${{ github.event.inputs.TWRP_MANIFEST_BRANCH }}/twrp-default.xml"
+        curl -fsSL -o .repo/local_manifests/remove-minimal.xml \
+          "https://raw.githubusercontent.com/TWRP-Test/platform_manifest_twrp_aosp/${{ github.event.inputs.TWRP_MANIFEST_BRANCH }}/remove-minimal.xml"
         (while true; do echo "Syncing source..."; df -h /; sleep 60; done) &
         TIP_PID=$!
         repo sync -c
