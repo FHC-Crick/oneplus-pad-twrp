@@ -96,22 +96,17 @@ jobs:
         ls -la $OUT/
         # recovery ramdisk is LZ4 stream (BOARD_RAMDISK_USE_LZ4); pack as-is with stock os_version
         cp $OUT/ramdisk-recovery.img $OUT/twrp-ramdisk.bin
-        out/host/linux-x86/bin/mkbootimg \
-          --header_version 4 \
-          --pagesize 4096 \
-          --os_version 0x1c000194 \
-          --ramdisk $OUT/twrp-ramdisk.bin \
-          -o $OUT/TWRP-init_boot.img
+        out/host/linux-x86/bin/mkbootimg --header_version 4 --pagesize 4096 --os_version 0x1c000194 --ramdisk $OUT/twrp-ramdisk.bin -o $OUT/TWRP-init_boot.img
         ls -la $OUT/TWRP-init_boot.img
         # sanity: parse header back
-        python3 - <<'EOF'
-import struct
-d = open('$OUT/TWRP-init_boot.img', 'rb').read()
-assert d[:8] == b'ANDROID!', 'bad magic'
-rs = struct.unpack_from('<I', d, 16)[0]
-hv = struct.unpack_from('<I', d, 40)[0]
-print(f'header_version={hv} ramdisk_size={rs}')
-EOF
+        python3 - "$OUT/TWRP-init_boot.img" <<'EOF'
+        import struct, sys
+        d = open(sys.argv[1], 'rb').read()
+        assert d[:8] == b'ANDROID!', 'bad magic'
+        rs = struct.unpack_from('<I', d, 16)[0]
+        hv = struct.unpack_from('<I', d, 40)[0]
+        print('header_version=%d ramdisk_size=%d' % (hv, rs))
+        EOF
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
