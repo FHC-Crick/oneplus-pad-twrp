@@ -1,0 +1,122 @@
+name: TWRP 16 Builder (OPD2407)
+
+on:
+  workflow_dispatch:
+    inputs:
+      TWRP_MANIFEST_URL:
+        description: "TWRP manifest url"
+        required: true
+        default: "https://github.com/TWRP-Test/platform_manifest_twrp_aosp"
+      TWRP_MANIFEST_BRANCH:
+        description: "TWRP branch"
+        required: true
+        default: "twrp-16.0"
+      DEVICE_TREE_URL:
+        description: "Device tree url"
+        required: true
+        default: "https://github.com/FHC-Crick/oneplus-pad-twrp"
+      DEVICE_TREE_BRANCH:
+        description: "Device tree branch"
+        required: true
+        default: "main"
+      DEVICE_PATH:
+        description: "Device path device/"
+        required: true
+        default: "oplus/opd2407"
+      DEVICE_NAME:
+        description: "Device name"
+        required: true
+        default: "opd2407"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Show build info
+      run: |
+        echo "LUNCH_TARGET=${{ github.event.inputs.DEVICE_NAME }}" >> "$GITHUB_ENV"
+        {
+          echo 'BUILD_INFO<<EOF'
+          echo
+          echo Manifest url: ${{ github.event.inputs.TWRP_MANIFEST_URL }}
+          echo Manifest branch: ${{ github.event.inputs.TWRP_MANIFEST_BRANCH }}
+          echo Device tree url: ${{ github.event.inputs.DEVICE_TREE_URL }}
+          echo Device tree branch: ${{ github.event.inputs.DEVICE_TREE_BRANCH }}
+          echo Device path: ${{ github.event.inputs.DEVICE_PATH }}
+          echo Device name: ${{ github.event.inputs.DEVICE_NAME }}
+          echo Build target: recovery.img + init_boot repack
+          echo Build date: `date`
+          echo
+          echo EOF
+        } >> "$GITHUB_ENV"
+        echo BUILD_DATE=`date +%F` >> "$GITHUB_ENV"
+
+    - name: Cleanup
+      uses: rokibhasansagar/slimhub_actions@main
+
+    - name: Maximize build space
+      uses: easimon/maximize-build-space@master
+
+    - name: Setup environment
+      run: |
+        export DEBIAN_FRONTEND=noninteractive
+        sudo apt update
+        sudo apt install repo -y
+        git config --global user.name ${{ github.actor }}
+        git config --global user.email ${{ github.actor }}@users.noreply.github.com
+
+    - name: Sync source
+      run: |
+        repo init -u ${{ github.event.inputs.TWRP_MANIFEST_URL }} -b ${{ github.event.inputs.TWRP_MANIFEST_BRANCH }} --depth=1
+        (while true; do echo "Syncing source..."; sleep 60; done) &
+        TIP_PID=$!
+        repo sync
+        kill $TIP_PID && exit 0
+
+    - name: Setup device
+      run: |
+        git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} device/${{ github.event.inputs.DEVICE_PATH }}
+
+    - name: Build TWRP
+      run: |
+        source build/envsetup.sh
+        export ALLOW_MISSING_DEPENDENCIES=true
+        lunch twrp_${{ env.LUNCH_TARGET }}
+        (while true; do echo `date +%T` "Building TWRP..."; free -h; sleep 30; done) &
+        TIP_PID=$!
+        m recoveryimage
+        kill $TIP_PID && exit 0
+
+    - name: Repack init_boot (TWRP ramdisk + stock header params)
+      run: |
+        set -e
+        OUT=out/target/product/${{ github.event.inputs.DEVICE_NAME }}
+        ls -la $OUT/
+        # recovery ramdisk is LZ4 stream (BOARD_RAMDISK_USE_LZ4); pack as-is with stock os_version
+        cp $OUT/ramdisk-recovery.img $OUT/twrp-ramdisk.bin
+        out/host/linux-x86/bin/mkbootimg \
+          --header_version 4 \
+          --pagesize 4096 \
+          --os_version 0x1c000194 \
+          --ramdisk $OUT/twrp-ramdisk.bin \
+          -o $OUT/TWRP-init_boot.img
+        ls -la $OUT/TWRP-init_boot.img
+        # sanity: parse header back
+        python3 - <<'EOF'
+import struct
+d = open('$OUT/TWRP-init_boot.img', 'rb').read()
+assert d[:8] == b'ANDROID!', 'bad magic'
+rs = struct.unpack_from('<I', d, 16)[0]
+hv = struct.unpack_from('<I', d, 40)[0]
+print(f'header_version={hv} ramdisk_size={rs}')
+EOF
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: TWRP-OPD2407-${{ env.BUILD_DATE }}-${{ github.run_id }}
+        path: |
+          out/target/product/${{ github.event.inputs.DEVICE_NAME }}/TWRP-init_boot.img
+          out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery.img
