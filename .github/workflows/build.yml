@@ -58,6 +58,8 @@ jobs:
 
     - name: Maximize build space
       uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: 512
 
     - name: Setup environment
       run: |
@@ -69,11 +71,14 @@ jobs:
 
     - name: Sync source
       run: |
-        repo init -u ${{ github.event.inputs.TWRP_MANIFEST_URL }} -b ${{ github.event.inputs.TWRP_MANIFEST_BRANCH }} --depth=1
-        (while true; do echo "Syncing source..."; sleep 60; done) &
+        repo init -u ${{ github.event.inputs.TWRP_MANIFEST_URL }} -b ${{ github.event.inputs.TWRP_MANIFEST_BRANCH }} --depth=1 -m twrp-default.xml
+        (while true; do echo "Syncing source..."; df -h /; sleep 60; done) &
         TIP_PID=$!
-        repo sync
-        kill $TIP_PID && exit 0
+        repo sync -c
+        kill $TIP_PID
+        # drop .repo git objects (not needed for build) to free ~15-20GB
+        rm -rf .repo
+        df -h /
 
     - name: Setup device
       run: |
