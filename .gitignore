@@ -1,0 +1,5 @@
+payload.bin
+payload_properties.txt
+extracted/
+*.img
+!README.md
