@@ -71,7 +71,7 @@ jobs:
 
     - name: Sync source
       run: |
-        repo init -u ${{ github.event.inputs.TWRP_MANIFEST_URL }} -b ${{ github.event.inputs.TWRP_MANIFEST_BRANCH }} --depth=1
+        repo init -u ${{ github.event.inputs.TWRP_MANIFEST_URL }} -b ${{ github.event.inputs.TWRP_MANIFEST_BRANCH }} --depth=1 --no-use-superproject
         mkdir -p .repo/local_manifests
         curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
           -H "Accept: application/vnd.github.raw" \
@@ -79,7 +79,7 @@ jobs:
           -o .repo/local_manifests/twrp-default.xml
         (while true; do echo "Syncing source..."; df -h /; sleep 60; done) &
         TIP_PID=$!
-        repo sync -c
+        repo sync -c --no-use-superproject
         kill $TIP_PID
         # drop .repo git objects (not needed for build) to free ~15-20GB
         rm -rf .repo
