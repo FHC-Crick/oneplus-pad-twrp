@@ -65,7 +65,12 @@ jobs:
       run: |
         export DEBIAN_FRONTEND=noninteractive
         sudo apt update
-        sudo apt install repo -y
+        sudo apt install repo zram-tools linux-modules-extra-$(uname -r) -y
+        sudo modprobe zram
+        sudo sed -i 's/^#PERCENT=50/PERCENT=90/' /etc/default/zramswap
+        sudo sed -i 's/^#PRIORITY=100/PRIORITY=1000/' /etc/default/zramswap
+        sudo systemctl restart zramswap || true
+        zramctl
         git config --global user.name ${{ github.actor }}
         git config --global user.email ${{ github.actor }}@users.noreply.github.com
 
