@@ -71,12 +71,8 @@ jobs:
 
     - name: Sync source
       run: |
+        # official default.xml already includes twrp-default.xml -> remove-minimal.xml
         repo init -u ${{ github.event.inputs.TWRP_MANIFEST_URL }} -b ${{ github.event.inputs.TWRP_MANIFEST_BRANCH }} --depth=1 --no-use-superproject
-        mkdir -p .repo/local_manifests
-        curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-          -H "Accept: application/vnd.github.raw" \
-          "https://api.github.com/repos/FHC-Crick/oneplus-pad-twrp/contents/manifests/twrp-merged.xml?ref=${{ github.event.inputs.DEVICE_TREE_BRANCH }}" \
-          -o .repo/local_manifests/twrp-default.xml
         (while true; do echo "Syncing source..."; df -h /; sleep 60; done) &
         TIP_PID=$!
         repo sync -c --no-use-superproject
