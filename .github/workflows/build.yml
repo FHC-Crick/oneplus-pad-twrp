@@ -34,6 +34,9 @@ jobs:
     permissions:
       contents: write
     steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
     - name: Show build info
       run: |
         echo "LUNCH_TARGET=${{ github.event.inputs.DEVICE_NAME }}" >> "$GITHUB_ENV"
@@ -73,10 +76,7 @@ jobs:
       run: |
         repo init -u ${{ github.event.inputs.TWRP_MANIFEST_URL }} -b ${{ github.event.inputs.TWRP_MANIFEST_BRANCH }} --depth=1
         mkdir -p .repo/local_manifests
-        curl -fsSL -o .repo/local_manifests/twrp-default.xml \
-          "https://raw.githubusercontent.com/TWRP-Test/platform_manifest_twrp_aosp/${{ github.event.inputs.TWRP_MANIFEST_BRANCH }}/twrp-default.xml"
-        curl -fsSL -o .repo/local_manifests/remove-minimal.xml \
-          "https://raw.githubusercontent.com/TWRP-Test/platform_manifest_twrp_aosp/${{ github.event.inputs.TWRP_MANIFEST_BRANCH }}/remove-minimal.xml"
+        cp manifests/twrp-merged.xml .repo/local_manifests/twrp-default.xml
         (while true; do echo "Syncing source..."; df -h /; sleep 60; done) &
         TIP_PID=$!
         repo sync -c
