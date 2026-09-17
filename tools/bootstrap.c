@@ -1,16 +1,16 @@
-/* Full TWRP bootstrapper for OPD2407.
- * Mounts basic fs, reads vendor_boot_a (sdc41) TWRP lz4 ramdisk at offset 4096,
- * decompresses, unpacks cpio to /newroot, pivot_root, exec /init (TWRP init).
+/* Full TWRP bootstrapper for OPD2407 (raw cpio variant, no compression).
+ * Mounts basic fs, reads vendor_boot_a (sdc41) raw cpio at offset 4096,
+ * unpacks to /newroot, pivot_root, exec /init (TWRP init).
  */
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/syscall.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include "lz4.h"
 
 #define SEG_OFFSET 4096
 #define SEG_SIZE (52 * 1024 * 1024)
@@ -67,9 +67,7 @@ static int unpack_cpio(const unsigned char *d, size_t size, const char *root) {
         memcpy(name, p + 110, namesize - 1);
         name[namesize - 1] = 0;
         if (strcmp(name, "TRAILER!!!") == 0) return 0;
-        if (strncmp(name, "./", 2) == 0) {
-            memmove(name, name + 2, strlen(name) - 1);
-        }
+        if (strncmp(name, "./", 2) == 0) memmove(name, name + 2, strlen(name) - 1);
         snprintf(full, sizeof(full), "%s/%s", root, name);
         make_path(root, name);
         const unsigned char *data = p + 110 + namesize;
@@ -112,21 +110,16 @@ int main(void) {
     int fd = open("/dev/block/sdc41", O_RDONLY);
     if (fd < 0) { cput("OPEN SDC41 FAIL\n"); for (;;) pause(); }
     lseek(fd, SEG_OFFSET, SEEK_SET);
-    unsigned char *lz = malloc(SEG_SIZE);
-    unsigned char *out = malloc(OUT_MAX);
-    if (!lz || !out) { cput("MALLOC FAIL\n"); for (;;) pause(); }
-    ssize_t got = read(fd, lz, SEG_SIZE);
+    unsigned char *buf = malloc(SEG_SIZE);
+    if (!buf) { cput("MALLOC FAIL\n"); for (;;) pause(); }
+    ssize_t got = read(fd, buf, SEG_SIZE);
     cput("READ VB DONE\n");
     close(fd);
-
-    int n = LZ4_decompress_safe((const char *)lz, (char *)out, (int)got, OUT_MAX);
-    if (n <= 0) { cput("LZ4 FAIL\n"); for (;;) pause(); }
-    cput("LZ4 OK\n");
 
     mkdir("/newroot", 0755);
     syscall(SYS_mount, "tmpfs", "/newroot", "tmpfs", 0, 0);
     if (chdir("/newroot") != 0) { cput("CHDIR FAIL\n"); for (;;) pause(); }
-    int rc = unpack_cpio(out, (size_t)n, ".");
+    int rc = unpack_cpio(buf, (size_t)got, ".");
     if (rc != 0) { cput("CPIO FAIL\n"); for (;;) pause(); }
     cput("CPIO OK\n");
 
