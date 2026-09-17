@@ -45,7 +45,7 @@ def extract(path, what, out):
     if data[:8] != b'ANDROID!':
         sys.exit(f"{path}: not a boot image")
     kernel_size = struct.unpack_from('<I', data, 8)[0]
-    ramdisk_size = struct.unpack_from('<I', data, 16)[0]
+    ramdisk_size = struct.unpack_from('<I', data, 12)[0]
     header_size = struct.unpack_from('<I', data, 20)[0]
     koff = align(header_size)
     roff = align(koff + kernel_size)

@@ -1,0 +1,25 @@
+name: Build Static Init
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Install toolchain
+      run: |
+        sudo apt update
+        sudo apt install -y gcc-aarch64-linux-gnu
+    - name: Build
+      run: |
+        aarch64-linux-gnu-gcc -static -Os -Wall tools/init.c -o init_arm
+        file init_arm
+        ls -la init_arm
+    - name: Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: init-arm
+        path: init_arm
