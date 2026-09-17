@@ -1,6 +1,5 @@
-/* Map probe: mount sdc5, write a numbered pong file into EVERY candidate path
- * (plus root and a few subdirs), then reboot. Whichever pong shows up in the
- * stock system reveals the exact path mapping. */
+/* Map probe v2: mount sdc5, FORCE remount rw (ext4 may come up read-only after
+ * unclean shutdown), write numbered pong files to all candidate paths, reboot. */
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/syscall.h>
@@ -8,6 +7,7 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <stdio.h>
+#include <errno.h>
 
 static void do_reboot(void) {
     syscall(SYS_reboot, 0xfee1dead, 672274793, 0x01234567, NULL);
@@ -26,37 +26,30 @@ int main(void) {
     struct stat st;
     long m = -1;
     if (stat("/dev/sdc5", &st) == 0)
-        m = syscall(SYS_mount, "/dev/sdc5", "/plog", "ext4", 0, "sync");
+        m = syscall(SYS_mount, "/dev/sdc5", "/plog", "ext4", 0, "sync,rw");
     else if (stat("/dev/block/sdc5", &st) == 0)
-        m = syscall(SYS_mount, "/dev/block/sdc5", "/plog", "ext4", 0, "sync");
+        m = syscall(SYS_mount, "/dev/block/sdc5", "/plog", "ext4", 0, "sync,rw");
     if (m != 0) do_poweroff();
 
+    /* force rw remount in case ext4 came up read-only */
+    syscall(SYS_mount, NULL, "/plog", NULL, MS_REMOUNT, "rw");
+
+    /* write test at root */
+    int tfd = open("/plog/wtest.txt", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    int werr = errno;
+    if (tfd >= 0) { write(tfd, "WTEST\n", 6); fsync(tfd); close(tfd); }
+
     const char *cands[] = {
-        "",                       /* 0: sdc5 root */
-        "/TWRL",                  /* 1: fresh dir we create */
-        "/oplus_fsck_fulldiskscanuserdata", /* 2 */
-        "/cache",                 /* 3 */
-        "/cache/factory",         /* 4 */
-        "/TMP",                   /* 5 */
-        "/pre_watchdog",          /* 6 */
-        "/camera",                /* 7 */
-        "/oplusreserve",          /* 8 */
-        "/storage",               /* 9 */
-        "/storage/vold",          /* 10 */
-        "/DCS",                   /* 11 */
-        "/backup",                /* 12 */
-        "/config",                /* 13 */
-        "/olc",                   /* 14 */
-        "/stamp",                 /* 15 */
-        "/theia",                 /* 16 */
-        "/sf",                    /* 17 */
-        "/postman",               /* 18 */
+        "", "/TWRL", "/oplus_fsck_fulldiskscanuserdata", "/cache", "/cache/factory",
+        "/TMP", "/pre_watchdog", "/camera", "/oplusreserve", "/storage", "/storage/vold",
+        "/DCS", "/backup", "/config", "/olc", "/stamp", "/theia", "/sf", "/postman",
     };
     int n = sizeof(cands) / sizeof(cands[0]);
     char dir[256], path[512];
+    int wrote = 0;
     for (int i = 0; i < n; i++) {
         snprintf(dir, sizeof(dir), "/plog%s", cands[i]);
-        mkdir(dir, 0777);  /* ensure exists (no-op if already) */
+        mkdir(dir, 0777);
         snprintf(path, sizeof(path), "%s/pong-%02d.txt", dir, i);
         int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
         if (fd >= 0) {
@@ -65,18 +58,11 @@ int main(void) {
             write(fd, msg, len);
             fsync(fd);
             close(fd);
+            wrote++;
         }
     }
-    /* marker presence check for the record (drives a distinct delay) */
-    int found = 0;
-    for (int i = 0; i < n; i++) {
-        snprintf(path, sizeof(path), "/plog%s/marker.txt", cands[i]);
-        if (stat(path, &st) == 0) { found = i + 1; break; }
-    }
-    if (found == 0) {
-        /* nothing seen: still reboot so we can re-enter the system */
-        do_reboot();
-    }
+    /* signal: wrote>0 -> reboot (device returns); wrote==0 -> poweroff */
+    if (wrote == 0) do_poweroff();
     do_reboot();
     for (;;) pause();
     return 0;
