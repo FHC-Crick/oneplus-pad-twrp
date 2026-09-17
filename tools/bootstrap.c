@@ -1,5 +1,7 @@
-/* Map probe v2: mount sdc5, FORCE remount rw (ext4 may come up read-only after
- * unclean shutdown), write numbered pong files to all candidate paths, reboot. */
+/* Modify probe: search candidate paths for the shell-written marker.txt, then
+ * TRUNCATE and rewrite it with "MODIFIED-<i> <path>". If the stock system sees
+ * the new content, the mapping and write path are proven. Also writes fresh
+ * files as a secondary signal. */
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/syscall.h>
@@ -7,7 +9,6 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <stdio.h>
-#include <errno.h>
 
 static void do_reboot(void) {
     syscall(SYS_reboot, 0xfee1dead, 672274793, 0x01234567, NULL);
@@ -30,14 +31,7 @@ int main(void) {
     else if (stat("/dev/block/sdc5", &st) == 0)
         m = syscall(SYS_mount, "/dev/block/sdc5", "/plog", "ext4", 0, "sync,rw");
     if (m != 0) do_poweroff();
-
-    /* force rw remount in case ext4 came up read-only */
     syscall(SYS_mount, NULL, "/plog", NULL, MS_REMOUNT, "rw");
-
-    /* write test at root */
-    int tfd = open("/plog/wtest.txt", O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    int werr = errno;
-    if (tfd >= 0) { write(tfd, "WTEST\n", 6); fsync(tfd); close(tfd); }
 
     const char *cands[] = {
         "", "/TWRL", "/oplus_fsck_fulldiskscanuserdata", "/cache", "/cache/factory",
@@ -45,24 +39,30 @@ int main(void) {
         "/DCS", "/backup", "/config", "/olc", "/stamp", "/theia", "/sf", "/postman",
     };
     int n = sizeof(cands) / sizeof(cands[0]);
-    char dir[256], path[512];
-    int wrote = 0;
+    char path[512], msg[128];
+    int modified = 0;
     for (int i = 0; i < n; i++) {
-        snprintf(dir, sizeof(dir), "/plog%s", cands[i]);
-        mkdir(dir, 0777);
-        snprintf(path, sizeof(path), "%s/pong-%02d.txt", dir, i);
-        int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        snprintf(path, sizeof(path), "/plog%s/marker.txt", cands[i]);
+        if (stat(path, &st) != 0) continue;
+        int fd = open(path, O_WRONLY | O_TRUNC);
         if (fd >= 0) {
-            char msg[64];
-            int len = snprintf(msg, sizeof(msg), "PONG %02d path=%s\n", i, cands[i]);
+            int len = snprintf(msg, sizeof(msg), "MODIFIED-%02d %s\n", i, cands[i]);
             write(fd, msg, len);
             fsync(fd);
             close(fd);
-            wrote++;
+            modified = i + 1;
         }
     }
-    /* signal: wrote>0 -> reboot (device returns); wrote==0 -> poweroff */
-    if (wrote == 0) do_poweroff();
+    /* secondary: create files in root and TWRL */
+    int w = 0;
+    for (int i = 0; i < 2; i++) {
+        const char *d = i == 0 ? "/plog" : "/plog/TWRL";
+        mkdir(d, 0777);
+        snprintf(path, sizeof(path), "%s/newfile-%d.txt", d, i);
+        int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (fd >= 0) { write(fd, "NEW\n", 4); fsync(fd); close(fd); w++; }
+    }
+    if (modified == 0 && w == 0) do_poweroff();
     do_reboot();
     for (;;) pause();
     return 0;
