@@ -28,24 +28,30 @@ def trailer():
 def pack_dir(root, devs, out):
     """devs: list of (path, mode, rdev_major, rdev_minor)"""
     out_b = b''
-    # device nodes first (directories are packed by os.walk below)
+    # Collect all entries, then emit in deterministic order with every parent
+    # directory appearing before its children (required by the kernel initramfs
+    # unpacker). Device nodes must therefore come AFTER their directory.
+    items = []  # (depth, path_for_sort, bytes)
     for path, mode, rmaj, rmin in devs:
-        out_b += entry(path, b'', mode, rdev_major=rmaj, rdev_minor=rmin)
+        items.append((path.count('/'), path, entry(path, b'', mode, rdev_major=rmaj, rdev_minor=rmin)))
     for dirpath, dirnames, filenames in os.walk(root):
         rel = os.path.relpath(dirpath, root)
         for d in dirnames:
             p = d if rel == '.' else f"{rel}/{d}"
             st = os.lstat(os.path.join(dirpath, d))
-            out_b += entry(p + '/', b'', stat.S_IMODE(st.st_mode) | stat.S_IFDIR)
+            items.append((p.count('/'), p, entry(p + '/', b'', stat.S_IMODE(st.st_mode) | stat.S_IFDIR)))
         for fn in filenames:
             p = fn if rel == '.' else f"{rel}/{fn}"
             fp = os.path.join(dirpath, fn)
             st = os.lstat(fp)
             if stat.S_ISLNK(st.st_mode):
-                out_b += entry(p, os.readlink(fp), stat.S_IFLNK | 0o777)
+                items.append((p.count('/'), p, entry(p, os.readlink(fp), stat.S_IFLNK | 0o777)))
             else:
                 with open(fp, 'rb') as f:
-                    out_b += entry(p, f.read(), stat.S_IMODE(st.st_mode) | stat.S_IFREG)
+                    items.append((p.count('/'), p, entry(p, f.read(), stat.S_IMODE(st.st_mode) | stat.S_IFREG)))
+    items.sort(key=lambda t: (t[0], t[1]))
+    for _, _, blob in items:
+        out_b += blob
     out_b += trailer()
     with open(out, 'wb') as f:
         f.write(out_b)

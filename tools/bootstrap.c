@@ -55,7 +55,15 @@ static int unpack_cpio(const unsigned char *d, size_t size, const char *root) {
     char name[1024], full[2048];
     int files = 0;
     while (p + 110 <= end) {
-        if (memcmp(p, "070701", 6) != 0) { L("bad magic\n"); return -1; }
+        if (memcmp(p, "070701", 6) != 0) {
+            /* resync: scan forward for the next header (BSD cpio variants can
+             * produce padding we don't predict) */
+            const unsigned char *q = p + 1;
+            while (q + 110 <= end && memcmp(q, "070701", 6) != 0) q++;
+            if (q + 110 > end) { L("no resync\n"); return -1; }
+            p = q;
+            continue;
+        }
         unsigned mode = hx(p + 14);
         unsigned filesize = hx(p + 54);
         unsigned rdevmaj = hx(p + 78);
