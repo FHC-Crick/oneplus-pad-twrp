@@ -1,0 +1,25 @@
+name: Build TWRP Bootstrap
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Install toolchain
+      run: |
+        sudo apt update
+        sudo apt install -y gcc-aarch64-linux-gnu
+    - name: Build
+      run: |
+        aarch64-linux-gnu-gcc -static -Os -Wall tools/bootstrap.c tools/lz4.c -o bootstrap_arm
+        file bootstrap_arm
+        ls -la bootstrap_arm
+    - name: Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: bootstrap-arm
+        path: bootstrap_arm
