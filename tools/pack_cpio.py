@@ -14,15 +14,36 @@ def pad4(n):
     return (4 - n % 4) % 4
 
 
-def entry(name, data, mode, uid=0, gid=0, rdev_major=0, rdev_minor=0):
+_ino = [0x000493e0]  # official images start around this value
+
+
+def entry(name, data, mode, uid=0, gid=0, rdev_major=0, rdev_minor=0, ino=None):
+    """Emit one newc entry matching the official mkbootfs layout:
+    - non-zero incrementing inode numbers (kernel-sensitive)
+    - name field and data field each padded to a 4-byte boundary"""
     if isinstance(data, str):
         data = data.encode()
-    hdr = f"{'070701':s}{0:08x}{mode:08x}{uid:08x}{gid:08x}{1:08x}{0:08x}{len(data):08x}{0:08x}{0:08x}{rdev_major:08x}{rdev_minor:08x}{len(name)+1:08x}{0:08x}".encode()
-    return hdr + name.encode() + b'\x00' + data + b'\x00' * pad4(len(hdr) + len(name) + 1 + len(data))
+    if ino is None:
+        ino = _ino[0]
+        _ino[0] += 1
+    hdr = f"{'070701':s}{ino:08x}{mode:08x}{uid:08x}{gid:08x}{1:08x}{0:08x}{len(data):08x}{0:08x}{0:08x}{rdev_major:08x}{rdev_minor:08x}{len(name)+1:08x}{0:08x}".encode()
+    body = hdr + name.encode() + b'\x00'
+    body += b'\x00' * ((4 - len(body) % 4) % 4)
+    body += data
+    body += b'\x00' * ((4 - len(body) % 4) % 4)
+    return body
 
 
 def trailer():
-    return f"070701{0:08x}{0:08x}{0:08x}{0:08x}{1:08x}{0:08x}{0:08x}{0:08x}{0:08x}{11:08x}{0:08x}".encode() + b"TRAILER!!!\x00"
+    """Official mkbootfs trailer: mode 0o755, non-zero ino, then zero padding
+    out to the next 512-byte boundary."""
+    global _ino
+    ino = _ino[0]
+    _ino[0] += 1
+    body = f"070701{ino:08x}{0o755:08x}{0:08x}{0:08x}{1:08x}{0:08x}{0:08x}{0:08x}{0:08x}{11:08x}{0:08x}".encode() + b"TRAILER!!!\x00"
+    body += b'\x00' * ((4 - len(body) % 4) % 4)
+    body += b'\x00' * ((512 - len(body) % 512) % 512)
+    return body
 
 
 def pack_dir(root, devs, out):
