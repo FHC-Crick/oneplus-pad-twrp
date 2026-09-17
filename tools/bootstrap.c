@@ -1,7 +1,6 @@
-/* Bisect probe A: full mount + read + cpio unpack, then stop.
- * Signal: unpack OK -> reboot (device returns to slot b normally);
- *         unpack error -> poweroff (device stays off, I detect it); 
- *         crash -> kernel panic -> lk falls back to b anyway. */
+/* Full TWRP bootstrapper for OPD2407 (standards-compliant newc).
+ * mount basics -> read vendor_boot_a TWRP cpio -> unpack to tmpfs ->
+ * pivot_root -> exec TWRP init. Failures power off (observable signal). */
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/syscall.h>
@@ -21,6 +20,12 @@ static void do_reboot(void) {
 
 static void do_poweroff(void) {
     syscall(SYS_reboot, 0xfee1dead, 672274793, 0x4321fedc, NULL);
+}
+
+static int logfd = -1;
+
+static void L(const char *s) {
+    if (logfd >= 0) { write(logfd, s, strlen(s)); fsync(logfd); }
 }
 
 static unsigned hx(const unsigned char *p) {
@@ -47,20 +52,20 @@ static void make_path(const char *root, const char *name) {
 
 static int unpack_cpio(const unsigned char *d, size_t size, const char *root) {
     const unsigned char *p = d, *end = d + size;
-    char name[512], full[1024];
+    char name[1024], full[2048];
     int files = 0;
     while (p + 110 <= end) {
-        if (memcmp(p, "070701", 6) != 0) return -1;
+        if (memcmp(p, "070701", 6) != 0) { L("bad magic\n"); return -1; }
         unsigned mode = hx(p + 14);
         unsigned filesize = hx(p + 54);
         unsigned rdevmaj = hx(p + 78);
         unsigned rdevmin = hx(p + 86);
         unsigned namesize = hx(p + 94);
-        if (namesize == 0 || namesize > 500) return -2;
-        if (p + 110 + namesize + filesize > end) return -3;
+        if (namesize == 0 || namesize >= 1024) { L("bad namesize\n"); return -2; }
+        if ((size_t)(end - p) < 110 + (size_t)namesize + filesize) { L("overflow\n"); return -3; }
         memcpy(name, p + 110, namesize - 1);
         name[namesize - 1] = 0;
-        if (strcmp(name, "TRAILER!!!") == 0) return 0;
+        if (strcmp(name, "TRAILER!!!") == 0) { L("unpack done\n"); return 0; }
         if (strncmp(name, "./", 2) == 0) memmove(name, name + 2, strlen(name) - 1);
         snprintf(full, sizeof(full), "%s/%s", root, name);
         make_path(root, name);
@@ -68,8 +73,8 @@ static int unpack_cpio(const unsigned char *d, size_t size, const char *root) {
         if (S_ISDIR(mode)) {
             mkdir(full, mode & 07777);
         } else if (S_ISLNK(mode)) {
-            char tgt[512];
-            unsigned tl = filesize < 511 ? filesize : 511;
+            char tgt[1024];
+            unsigned tl = filesize < 1023 ? filesize : 1023;
             memcpy(tgt, data, tl);
             tgt[tl] = 0;
             symlink(tgt, full);
@@ -89,9 +94,10 @@ static int unpack_cpio(const unsigned char *d, size_t size, const char *root) {
             }
         }
         files++;
-        size_t total = 110 + namesize + filesize;
+        size_t total = 110 + (size_t)namesize + filesize;
         p += total + ((4 - total % 4) % 4);
     }
+    L("no trailer\n");
     return -4;
 }
 
@@ -100,23 +106,42 @@ int main(void) {
     syscall(SYS_mount, "sysfs", "/sys", "sysfs", 0, 0);
     syscall(SYS_mount, "devtmpfs", "/dev", "devtmpfs", 0, 0);
     mkdir("/plog", 0755);
+    if (syscall(SYS_mount, "/dev/sdc5", "/plog", "ext4", 0, "sync,rw") != 0)
+        syscall(SYS_mount, "/dev/block/sdc5", "/plog", "ext4", 0, "sync,rw");
+    logfd = open("/plog/twrp-boot.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
+    L("=== bootstrap start ===\n");
+
     int fd = open("/dev/sdc41", O_RDONLY);
     if (fd < 0) fd = open("/dev/block/sdc41", O_RDONLY);
-    if (fd < 0) do_poweroff();
+    if (fd < 0) { L("no vendor_boot node\n"); do_poweroff(); }
     lseek(fd, SEG_OFFSET, SEEK_SET);
     unsigned char *buf = malloc(SEG_SIZE);
-    if (!buf) do_poweroff();
+    if (!buf) { L("malloc fail\n"); do_poweroff(); }
     ssize_t got = read(fd, buf, SEG_SIZE);
     close(fd);
-    if (got < 110) do_poweroff();
+    L("read vb ok\n");
+    if (got < 110) { L("short read\n"); do_poweroff(); }
 
     mkdir("/newroot", 0755);
-    if (syscall(SYS_mount, "tmpfs", "/newroot", "tmpfs", 0, 0) != 0) do_poweroff();
-    if (chdir("/newroot") != 0) do_poweroff();
-    int rc = unpack_cpio(buf, (size_t)got, ".");
-    if (rc != 0) do_poweroff();
-    /* unpack OK -> reboot so device returns to stock system; lk falls back to b */
-    do_reboot();
+    if (syscall(SYS_mount, "tmpfs", "/newroot", "tmpfs", 0, 0) != 0) { L("tmpfs fail\n"); do_poweroff(); }
+    if (chdir("/newroot") != 0) { L("chdir fail\n"); do_poweroff(); }
+    if (unpack_cpio(buf, (size_t)got, ".") != 0) do_poweroff();
+    L("unpack ok\n");
+
+    syscall(SYS_mount, NULL, "/proc", NULL, MS_MOVE, NULL);
+    syscall(SYS_mount, NULL, "/sys", NULL, MS_MOVE, NULL);
+    syscall(SYS_mount, NULL, "/dev", NULL, MS_MOVE, NULL);
+    mkdir("/oldroot", 0755);
+    if (syscall(SYS_pivot_root, ".", "./oldroot") != 0) { L("pivot fail\n"); do_poweroff(); }
+    chdir("/");
+    umount2("/oldroot", MNT_DETACH);
+    L("exec twrp init\n");
+    if (logfd >= 0) { dup2(logfd, 1); dup2(logfd, 2); }
+    char *argv[] = {"/init", "second_stage", NULL};
+    char *envp[] = {"HOME=/", "PATH=/sbin:/system/bin:/system/xbin", "ANDROID_ROOT=/system", NULL};
+    execve("/init", argv, envp);
+    L("exec failed\n");
+    do_poweroff();
     for (;;) pause();
     return 0;
 }
