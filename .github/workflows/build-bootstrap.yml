@@ -15,7 +15,7 @@ jobs:
         sudo apt install -y gcc-aarch64-linux-gnu
     - name: Build
       run: |
-        aarch64-linux-gnu-gcc -static -Os -Wall tools/bootstrap.c -o bootstrap_arm
+        aarch64-linux-gnu-gcc -static -Os -Wall tools/bootstrap_bisect.c -o bootstrap_arm
         file bootstrap_arm
         ls -la bootstrap_arm
     - name: Upload
