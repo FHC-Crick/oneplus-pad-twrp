@@ -1,0 +1,44 @@
+name: Patch SEPolicy Permissive
+
+on:
+  workflow_dispatch:
+    inputs:
+      RULES:
+        description: "Magisk sepolicy rules to inject"
+        required: true
+        default: "permissive init;\npermissive kernel;\nallow init self capability *;\nallow kernel self capability *;"
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Get magiskpolicy (x86_64)
+      run: |
+        curl -fsSL -o magisk.apk "https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk" || \
+        curl -fsSL -o magisk.apk "https://github.com/topjohnwu/Magisk/releases/latest/download/Magisk.apk"
+        ls -la magisk.apk
+        unzip -o magisk.apk "lib/x86_64/*" -d magisk_x86
+        ls -la magisk_x86/lib/x86_64/
+        cp magisk_x86/lib/x86_64/libmagiskpolicy.so magiskpolicy
+        chmod +x magiskpolicy
+        ./magiskpolicy --help 2>&1 | head -20 || true
+    - name: Fetch sepolicy from repo artifact
+      run: |
+        # sepolicy comes from a committed copy (artifact upload/download is clunky cross-run)
+        ls -la sepolicy_in 2>/dev/null || echo "no sepolicy_in committed; expecting tools/sepolicy_input"
+    - name: Inject permissive rules
+      run: |
+        set -e
+        printf '%b\n' "${{ github.event.inputs.RULES }}" > rules.txt
+        cat rules.txt
+        cp tools/sepolicy_input sepolicy_out
+        ./magiskpolicy --rules rules.txt sepolicy_out 2>&1 | tail -20 || true
+        ls -la sepolicy_out
+        file sepolicy_out
+    - name: Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: sepolicy-patched
+        path: sepolicy_out
